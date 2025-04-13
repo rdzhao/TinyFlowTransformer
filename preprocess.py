@@ -22,7 +22,7 @@ def crop_and_rescale_image(image_path, output_path, size=(512, 512)):
 
         # Crop and resize
         img_cropped = img.crop((left, top, right, bottom))
-        img_resized = img_cropped.resize(size, Image.ANTIALIAS)
+        img_resized = img_cropped.resize(size, Image.BILINEAR)
 
         # Save the processed image
         img_resized.save(output_path)
@@ -52,8 +52,8 @@ def process_images_in_folder(input_folder, output_folder, size=(512, 512)):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Crop and rescale images in a folder.")
-    parser.add_argument("input_folder", type=str, help="Path to the folder containing input images.")
-    parser.add_argument("output_folder", type=str, help="Path to the folder to save processed images.")
+    parser.add_argument("--input_folder", type=str, help="Path to the folder containing input images.")
+    parser.add_argument("--output_folder", type=str, help="Path to the folder to save processed images.")
     parser.add_argument("--size", type=int, nargs=2, default=(512, 512), help="Desired output size (width height).")
 
     args = parser.parse_args()
