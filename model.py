@@ -85,3 +85,133 @@ class MultiHeadCrossAttention(nn.Module):
         o = self.proj(o)
 
         return o
+
+class ModulatedTransformerBlock(nn.Module):
+    def __init__(self, d_embd, n_head, d_cond_embd, d_time_embd):
+        super().__init__()
+        assert d_embd % n_head == 0
+
+        self.d_embd = d_embd
+        self.n_head = n_head
+        self.d_cond_embd = d_cond_embd
+        self.d_time_embd = d_time_embd
+
+        self.d_head = self.d_embd // self.n_head
+        
+        self.layernorm_1 = nn.LayerNorm(self.d_embd)
+        self.self_attention = MultiHeadSelfAttention(self.d_embd, self.n_head)
+        self.scale_alpha_1 = nn.Linear(self.d_time_embd, self.d_embd)
+        self.shift_beta_1 = nn.Linear(self.d_time_embd, self.d_emdb)
+        self.scale_gamma_1 = nn.Linear(self.d_time_embd, self.d_embd)
+
+        self.layernorm_2 = nn.LayerNorm(self.d_embd)
+        self.cross_attention = MultiHeadCrossAttention(self.d_embd, self.n_head, self.n_cond_embd)
+        self.scale_alpha_2 = nn.Linear(self.d_time_embd, self.d_embd)
+        self.shift_beta_2 = nn.Linear(self.d_time_embd, self.d_emdb)
+        self.scale_gamma_2 = nn.Linear(self.d_time_embd, self.d_embd)
+
+        self.layernorm_3 = nn.LayerNorm(self.d_embd)
+        self.ffn = nn.Linear(self.d_embd, self.d_embd)
+        self.scale_alpha_3 = nn.Linear(self.d_time_embd, self.d_embd)
+        self.shift_beta_3 = nn.Linear(self.d_time_embd, self.d_emdb)
+        self.scale_gamma_3 = nn.Linear(self.d_time_embd, self.d_embd)
+
+    def forward(self, x, time, cond):
+        b, t, c = x.shape # [B, T, C]
+        b_time, c_time = time.shape # [B, C]
+        b_cond, t_cond, c_cond = cond.shape # [B, T ,C]
+
+        time = eniops.repeat(time, "b c -> b t c", t=t)
+        sg_1 = self.scale_gamma_1(x)
+        sb_1 = self.shift_beta_1(x)
+        sa_1 = self.scale_alpha_1(x)
+        x = x + self.self_attention(self.layernorm_1(x) * sg_1 + sb_1) * sa_1
+
+        sg_2 = self.scale_gamma_2(x)
+        sb_2 = self.shift_beta_2(x)
+        sa_2 = self.scale_alpha_2(x)
+        x = x + self.cross_attention(self.layernorm_2(x) * sg_2 + sb_2, cond) * sa_2
+
+        sg_2 = self.scale_gamma_3(x)
+        sb_2 = self.shift_beta_3(x)
+        sa_2 = self.scale_alpha_3(x)
+        x = x + self.ffn(self.layernorm_2(x) * sg_2 + sb_2) * sa_3
+
+        return x
+
+class FlowModel(nn.Module):
+    def __init__(self, n_blocks, c_latent, d_embd, n_head, d_cond_embd, d_time_embd, patch_size):
+        super().__init__()
+        self.n_blocks = n_blocks
+        self.c_latent = c_latent
+        self.d_embd = d_embd
+        self.d_cond_embd = d_cond_embd
+        self.d_time_embd = d_time_embd
+        self.patch_hw = patch_hw
+
+        self.patchify_conv = nn.Conv2d(self.c_latent, self.d_embd, kernel_size=self.patch_size, stride=self.patch_size)
+        self.unpatchify_conv = nn.ConvTranspose2d(self.d_embd, self.c_latent, kernel_size=self.patch_size, stride=self.patch_size)
+
+        self.time_module = nn.ModuleList([
+            nn.Linear(self.d_time_embd, 3*self.d_time_embd)
+            nn.GeLU()
+            nn.Linear(3*self.d_time_embd, self.d_time_embd)
+        ])
+
+        self.blocks = nn.ModuleList([
+            ModulatedTransformerBlock(
+                d_embd=self.d_embd,
+                n_head=self.n_head,
+                d_cond_embd=self.d_cond_embd,
+                d_time_embd=self.d_time_embd
+            )
+            for _ in range(self.n_blocks)
+        ])
+        
+
+    def patchify(self, x):
+        x = self.patchify_conv(x)
+        return x
+    
+    def unpatchify(self, x):
+        x = self.unpatchify_conv(x)
+        return x
+
+    def sinusoidal_positional_embedding(self, seq_len, d_embd, device):
+        embd = torch.zeros((seq_len, d_embd), device=device)
+        pos = torch.arange(seq_len, device=device)
+        embd[:, 0::2] = torch.sin(pos/torch.pow(10000, 2*pos / d_embd)).to(device)
+        embd[:, 1::2] = torch.cos(pos/torch.pow(10000, 2*pos / d_embd)).to(device)
+        return embd
+
+    def time_embedding(self, time, d_time_embd, device):
+        b = time.shape
+        embd = torch.zeros((b, d_time_embd))
+        pos = torch.arange(b, device=device)
+        embd[:, 0::2] = torch.sin(pos/torch.pow(10000, 2*pos / d_time_embd)).to(device)
+        embd[:, 1::2] = torch.cos(pos/torch.pow(10000, 2*pos / d_time_embd)).to(device)
+        return embd
+
+    def forward(self, x, time, cond):
+        b, c, h, w = x.shape
+        
+        x = self.patchify(x)
+        x = einops.rearrange(x, "b c h w -> b (h w) c")
+        
+        pos_embd = self.sinusoidal_positional_embedding(x.size(-2), self.d_embd, x.device)
+        pos_embd = einops.rearrange(pos_embd, "t c -> 1 t c")
+        
+        x = x + pos_embd # [B, T, d_embd]
+
+        time_embd = self.time_embedding(time, self.d_time_embd, x.device) # [B, d_time_embd]
+        time_embd = self.time_module(time_embd)
+        
+        for block in self.blocks:
+            x = block(x, time_embd, cond)
+
+        x = F.layernorm(x)
+
+        x = self.unpatchify(x)
+
+        return x
+        
