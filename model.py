@@ -1,5 +1,5 @@
 import torch
-import torch as torch.nn
+import torch.nn as nn
 import torch.nn.functional as F
 
 import einops
@@ -7,18 +7,22 @@ import einops
 import math
 
 class MultiHeadSelfAttention(nn.Module):
-    def __init__(self, d_embd, n_head, causal=False):
+    def __init__(self, d_embd, n_head, causal=False, flash=False):
         super().__init__()
         assert d_embd % n_head == 0
         
-        self.d_emdb = d_embd
+        self.d_embd = d_embd
         self.n_head = n_head
         self.causal = causal
+        self.flash = flash
 
         self.d_head = self.d_embd // self.n_head
 
         self.qkv = nn.Linear(self.d_embd, 3*self.d_embd)
         self.proj = nn.Linear(self.d_embd, self.d_embd)
+
+    def use_flash(self, use_flash):
+            self.flash = use_flash
 
     def forward(self, x):
         b, t, c = x.shape
@@ -28,18 +32,21 @@ class MultiHeadSelfAttention(nn.Module):
         k = einops.rearrange(k, "b t (n_head d_head) -> b n_head t d_head", n_head=self.n_head, d_head=self.d_head)
         v = einops.rearrange(v, "b t (n_head d_head) -> b n_head t d_head", n_head=self.n_head, d_head=self.d_head)
         
-        if self.causal:
-            w = q @ k.transpose(-2, -1)
-            mask = torch.tril(torch.ones((t, t)), device=x.device)
-            w = torch.mask_fill(w, mask == 0, torch.float("-inf"))
-            w /= math.sqrt(self.d_head)
-            w = F.softmax(w, dim=-1)
-            o = w @ v
+        if not self.flash:
+            if self.causal:
+                w = q @ k.transpose(-2, -1)
+                mask = torch.tril(torch.ones((t, t), device=x.device))
+                w = torch.masked_fill(w, mask == 0, float("-inf"))
+                w /= math.sqrt(self.d_head)
+                w = F.softmax(w, dim=-1)
+                o = w @ v
+            else:
+                w = q @ k.transpose(-2, -1)
+                w /= math.sqrt(self.d_head)
+                w = F.softmax(w, dim=-1)
+                o = w @ v
         else:
-            w = q @ k.transpose(-2, -1)
-            w /= math.sqrt(self.d_head)
-            w = F.softmax(w, dim=-1)
-            o = w @ v
+            o = F.scaled_dot_product_attention(q, k, v, is_causal=self.causal)
         
         o = einops.rearrange(q, "b n_head t d_head -> b t (n_head d_head)")
         o = self.proj(o)
@@ -48,20 +55,24 @@ class MultiHeadSelfAttention(nn.Module):
 
 
 class MultiHeadCrossAttention(nn.Module):
-    def __init__(self, d_embd, n_head, n_cond_embd):
+    def __init__(self, d_embd, n_head, d_cond_embd, flash=False):
         super().__init__()
         assert d_embd % n_head == 0
 
         self.d_embd = d_embd
         self.n_head = n_head
-        self.n_cond_embd = n_cond_embd
+        self.d_cond_embd = d_cond_embd
+        self.flash = flash
         
         self.d_head = self.d_embd // self.n_head
 
-        self.q = nn.Linear(self.n_embd, self.n_embd)
-        self.kv = nn.Linear(self.n_cond_embd, 2*self.n_embd)
+        self.q = nn.Linear(self.d_embd, self.d_embd)
+        self.kv = nn.Linear(self.d_cond_embd, 2*self.d_embd)
 
-        self.proj = nn.Linear(self.n_embd, self.n_embd)
+        self.proj = nn.Linear(self.d_embd, self.d_embd)
+
+    def use_flash(self, use_flash):
+        self.flash = use_flash
 
     def forward(self, x, cond):
         b, t, c = x.shape
@@ -76,10 +87,13 @@ class MultiHeadCrossAttention(nn.Module):
         k = einops.rearrange(k, "b t (n_head d_head) -> b n_head t d_head", n_head=self.n_head, d_head=self.d_head)
         v = einops.rearrange(v, "b t (n_head d_head) -> b n_head t d_head", n_head=self.n_head, d_head=self.d_head)
 
-        w = q @ k.transpose(-2, -1)
-        w /= math.sqrt(self.d_head)
-        w = F.softmax(w, dim=-1)
-        o = w @ v
+        if not self.flash:
+            w = q @ k.transpose(-2, -1)
+            w /= math.sqrt(self.d_head)
+            w = F.softmax(w, dim=-1)
+            o = w @ v
+        else:
+            o = F.scaled_dot_product_attention(q, k, v)
 
         o = einops.rearrange(o, "b n_head t d_head -> b t (n_head d_head)")
         o = self.proj(o)
@@ -153,9 +167,9 @@ class FlowModel(nn.Module):
         self.unpatchify_conv = nn.ConvTranspose2d(self.d_embd, self.c_latent, kernel_size=self.patch_size, stride=self.patch_size)
 
         self.time_module = nn.ModuleList([
-            nn.Linear(self.d_time_embd, 3*self.d_time_embd)
-            nn.GeLU()
-            nn.Linear(3*self.d_time_embd, self.d_time_embd)
+            nn.Linear(self.d_time_embd, 3*self.d_time_embd),
+            nn.GeLU(),
+            nn.Linear(3*self.d_time_embd, self.d_time_embd),
         ])
 
         self.blocks = nn.ModuleList([
