@@ -101,7 +101,7 @@ class MultiHeadCrossAttention(nn.Module):
         return o
 
 class ModulatedTransformerBlock(nn.Module):
-    def __init__(self, d_embd, n_head,d_time_embd, d_cond_embd):
+    def __init__(self, d_embd, n_head, d_time_embd, d_cond_embd):
         super().__init__()
         assert d_embd % n_head == 0
 
@@ -154,23 +154,24 @@ class ModulatedTransformerBlock(nn.Module):
         return x
 
 class FlowModel(nn.Module):
-    def __init__(self, n_blocks, c_latent, d_embd, n_head, d_cond_embd, d_time_embd, patch_size):
+    def __init__(self, n_blocks, c_latent, d_embd, n_head, d_time_embd, d_cond_embd, patch_size):
         super().__init__()
         self.n_blocks = n_blocks
         self.c_latent = c_latent
         self.d_embd = d_embd
-        self.d_cond_embd = d_cond_embd
+        self.n_head = n_head
         self.d_time_embd = d_time_embd
-        self.patch_hw = patch_hw
+        self.d_cond_embd = d_cond_embd
+        self.patch_size = patch_size
 
         self.patchify_conv = nn.Conv2d(self.c_latent, self.d_embd, kernel_size=self.patch_size, stride=self.patch_size)
         self.unpatchify_conv = nn.ConvTranspose2d(self.d_embd, self.c_latent, kernel_size=self.patch_size, stride=self.patch_size)
 
-        self.time_module = nn.ModuleList([
+        self.time_module = nn.Sequential(
             nn.Linear(self.d_time_embd, 3*self.d_time_embd),
-            nn.GeLU(),
+            nn.GELU(),
             nn.Linear(3*self.d_time_embd, self.d_time_embd),
-        ])
+        )
 
         self.blocks = nn.ModuleList([
             ModulatedTransformerBlock(
@@ -181,6 +182,8 @@ class FlowModel(nn.Module):
             )
             for _ in range(self.n_blocks)
         ])
+
+        self.ln = nn.LayerNorm(d_embd)
         
 
     def patchify(self, x):
@@ -192,18 +195,24 @@ class FlowModel(nn.Module):
         return x
 
     def sinusoidal_positional_embedding(self, seq_len, d_embd, device):
+        assert d_embd % 2 == 0
         embd = torch.zeros((seq_len, d_embd), device=device)
         pos = torch.arange(seq_len, device=device)
-        embd[:, 0::2] = torch.sin(pos/torch.pow(10000, 2*pos / d_embd)).to(device)
-        embd[:, 1::2] = torch.cos(pos/torch.pow(10000, 2*pos / d_embd)).to(device)
+        indices = torch.arange(d_embd // 2, device=device)
+        outer = einops.einsum(pos, torch.pow(10000, 2*indices / d_embd), "n, d -> n d")
+        embd[:, 0::2] = torch.sin(outer).to(device)
+        embd[:, 1::2] = torch.cos(outer).to(device)
         return embd
 
     def time_embedding(self, time, d_time_embd, device):
-        b = time.shape
+        assert d_time_embd % 2 == 0
+        b = time.shape[0]
         embd = torch.zeros((b, d_time_embd))
-        pos = torch.arange(b, device=device)
-        embd[:, 0::2] = torch.sin(pos/torch.pow(10000, 2*pos / d_time_embd)).to(device)
-        embd[:, 1::2] = torch.cos(pos/torch.pow(10000, 2*pos / d_time_embd)).to(device)
+        pos = time
+        indices = torch.arange(d_time_embd // 2, device=device)
+        outer = einops.einsum(pos, torch.pow(10000, 2*indices / d_time_embd), "n, d -> n d")
+        embd[:, 0::2] = torch.sin(outer).to(device)
+        embd[:, 1::2] = torch.cos(outer).to(device)
         return embd
 
     def forward(self, x, time, cond):
@@ -219,12 +228,13 @@ class FlowModel(nn.Module):
 
         time_embd = self.time_embedding(time, self.d_time_embd, x.device) # [B, d_time_embd]
         time_embd = self.time_module(time_embd)
-        
+
         for block in self.blocks:
             x = block(x, time_embd, cond)
 
-        x = F.layernorm(x)
+        x = self.ln(x)
 
+        x = einops.rearrange(x, "b (h w) c -> b c h w", h=h//self.patch_size, w=w//self.patch_size)
         x = self.unpatchify(x)
 
         return x
