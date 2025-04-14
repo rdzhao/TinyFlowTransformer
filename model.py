@@ -101,33 +101,33 @@ class MultiHeadCrossAttention(nn.Module):
         return o
 
 class ModulatedTransformerBlock(nn.Module):
-    def __init__(self, d_embd, n_head, d_cond_embd, d_time_embd):
+    def __init__(self, d_embd, n_head,d_time_embd, d_cond_embd):
         super().__init__()
         assert d_embd % n_head == 0
 
         self.d_embd = d_embd
         self.n_head = n_head
-        self.d_cond_embd = d_cond_embd
         self.d_time_embd = d_time_embd
+        self.d_cond_embd = d_cond_embd
 
         self.d_head = self.d_embd // self.n_head
         
         self.layernorm_1 = nn.LayerNorm(self.d_embd)
         self.self_attention = MultiHeadSelfAttention(self.d_embd, self.n_head)
         self.scale_alpha_1 = nn.Linear(self.d_time_embd, self.d_embd)
-        self.shift_beta_1 = nn.Linear(self.d_time_embd, self.d_emdb)
+        self.shift_beta_1 = nn.Linear(self.d_time_embd, self.d_embd)
         self.scale_gamma_1 = nn.Linear(self.d_time_embd, self.d_embd)
 
         self.layernorm_2 = nn.LayerNorm(self.d_embd)
-        self.cross_attention = MultiHeadCrossAttention(self.d_embd, self.n_head, self.n_cond_embd)
+        self.cross_attention = MultiHeadCrossAttention(self.d_embd, self.n_head, self.d_cond_embd)
         self.scale_alpha_2 = nn.Linear(self.d_time_embd, self.d_embd)
-        self.shift_beta_2 = nn.Linear(self.d_time_embd, self.d_emdb)
+        self.shift_beta_2 = nn.Linear(self.d_time_embd, self.d_embd)
         self.scale_gamma_2 = nn.Linear(self.d_time_embd, self.d_embd)
 
         self.layernorm_3 = nn.LayerNorm(self.d_embd)
         self.ffn = nn.Linear(self.d_embd, self.d_embd)
         self.scale_alpha_3 = nn.Linear(self.d_time_embd, self.d_embd)
-        self.shift_beta_3 = nn.Linear(self.d_time_embd, self.d_emdb)
+        self.shift_beta_3 = nn.Linear(self.d_time_embd, self.d_embd)
         self.scale_gamma_3 = nn.Linear(self.d_time_embd, self.d_embd)
 
     def forward(self, x, time, cond):
@@ -135,21 +135,21 @@ class ModulatedTransformerBlock(nn.Module):
         b_time, c_time = time.shape # [B, C]
         b_cond, t_cond, c_cond = cond.shape # [B, T ,C]
 
-        time = eniops.repeat(time, "b c -> b t c", t=t)
-        sg_1 = self.scale_gamma_1(x)
-        sb_1 = self.shift_beta_1(x)
-        sa_1 = self.scale_alpha_1(x)
+        time = einops.rearrange(time, "b c -> b 1 c")
+        sg_1 = self.scale_gamma_1(time)
+        sb_1 = self.shift_beta_1(time)
+        sa_1 = self.scale_alpha_1(time)
         x = x + self.self_attention(self.layernorm_1(x) * sg_1 + sb_1) * sa_1
 
-        sg_2 = self.scale_gamma_2(x)
-        sb_2 = self.shift_beta_2(x)
-        sa_2 = self.scale_alpha_2(x)
+        sg_2 = self.scale_gamma_2(time)
+        sb_2 = self.shift_beta_2(time)
+        sa_2 = self.scale_alpha_2(time)
         x = x + self.cross_attention(self.layernorm_2(x) * sg_2 + sb_2, cond) * sa_2
 
-        sg_2 = self.scale_gamma_3(x)
-        sb_2 = self.shift_beta_3(x)
-        sa_2 = self.scale_alpha_3(x)
-        x = x + self.ffn(self.layernorm_2(x) * sg_2 + sb_2) * sa_3
+        sg_3 = self.scale_gamma_3(time)
+        sb_3 = self.shift_beta_3(time)
+        sa_3 = self.scale_alpha_3(time)
+        x = x + self.ffn(self.layernorm_3(x) * sg_3 + sb_3) * sa_3
 
         return x
 
