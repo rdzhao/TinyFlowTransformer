@@ -11,8 +11,12 @@ from torch.utils.data import DataLoader
 
 import einops
 
+import numpy as np
+from PIL import Image
+
 import yaml
 import argparse
+import os
 
 class FlowTrainer():
     def __init__(self, config_path, device):
@@ -24,6 +28,7 @@ class FlowTrainer():
         self.dataset_config = config["dataset"]
         self.model_config = config["model"]
         self.train_config = config["train"]
+        self.eval_config = config["eval"]
 
         self.dataset = FlowDataset(self.dataset_config["data_folder"])
         self.dataloader = DataLoader(self.dataset, batch_size=self.dataset_config["batch_size"], num_workers=4)
@@ -88,7 +93,10 @@ class FlowTrainer():
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
             cond = self.clip_text_encoder(**inputs).last_hidden_state
 
-        noise = torch.randn(l_b, l_c, l_h, l_w).to(image.device)
+        # noise = torch.randn(l_b, l_c, l_h, l_w).to(image.device)
+        with torch.random.fork_rng(devices=[image.device], enabled=True):
+            torch.manual_seed(42)
+            noise = torch.randn(l_b, l_c, l_h, l_w, device=image.device)
 
         time = torch.rand(b).to(image.device)
         time = torch.clamp(time, min=1e-4)
@@ -109,11 +117,54 @@ class FlowTrainer():
 
     def train(self):
         for i in range(self.train_config["n_epochs"]):
-            for batch in self.dataloader:
+            for k, batch in enumerate(self.dataloader):
                 loss = self.train_one_step(batch[0], batch[1])
-                print("Iteration:", i, "Loss:", loss.detach().cpu().numpy())
+                print("Iteration:", k, "Loss:", loss.detach().cpu().numpy())
 
+                if k % self.eval_config["iters"] == 0:
+                    self.eval(k ,batch[0][0:2], batch[1][0:2])
 
+    @torch.no_grad()
+    def eval(self, num_iters, image, desc):
+        image = image.to(self.device)
+        b, c, h, w = image.shape
+        with torch.no_grad():
+            image_enc = self.vae.encode(image)
+            latent = image_enc.latent_dist.sample()
+        l_b, l_c, l_h, l_w = latent.shape
+
+        with torch.no_grad():
+            inputs = self.clip_tokenizer(
+                desc,
+                return_tensors='pt', 
+                padding=True, 
+                truncation=True
+            )
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            cond = self.clip_text_encoder(**inputs).last_hidden_state
+
+        latent = torch.randn(l_b, l_c, l_h, l_w, device=image.device)
+        time_step = torch.tensor([1 / self.eval_config["steps"]], device=image.device)
+        for i in range(self.eval_config["steps"]):
+            time = torch.tensor([i / self.eval_config["steps"]], device=image.device)
+            vf_pred = self.model(latent, time, cond)
+            latent += vf_pred * time_step
+
+        dec_outputs = self.vae.decode(latent)
+        dec_images = dec_outputs.sample
+        dec_images = einops.rearrange(dec_images, "b c h w -> b h w c")
+
+        dec_images = dec_images.detach().cpu().numpy()
+        dec_images = np.clip(dec_images, 0, 1)
+        dec_images = np.array(dec_images*255, dtype=np.uint8)
+        
+        eval_folder = self.eval_config["eval_folder"]
+        os.makedirs(eval_folder, exist_ok=True)
+        for i in range(len(dec_images)):
+            dec_image_pil = Image.fromarray(dec_images[i])
+            iter_folder = f"{eval_folder}/iteration_{num_iters}"
+            os.makedirs(iter_folder, exist_ok=True)
+            dec_image_pil.save(f"{iter_folder}/img_{i}.jpg")
 
     
 if __name__ == "__main__":
