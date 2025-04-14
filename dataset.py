@@ -20,4 +20,4 @@ class FlowDataset(IterableDataset):
             image = Image.open(str(Path(self.data_folder) / image_file))
             image = self.transforms(image)
 
-            yield image_name, image
+            yield image, image_name
