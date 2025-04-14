@@ -198,7 +198,7 @@ class FlowModel(nn.Module):
         embd = torch.zeros((seq_len, d_embd), device=device)
         pos = torch.arange(seq_len, device=device)
         indices = torch.arange(d_embd // 2, device=device)
-        outer = einops.einsum(pos, torch.pow(10000, 2*indices / d_embd), "n, d -> n d")
+        outer = einops.einsum(pos, 1.0/torch.pow(10000, 2*indices / d_embd), "n, d -> n d")
         embd[:, 0::2] = torch.sin(outer)
         embd[:, 1::2] = torch.cos(outer)
         return embd
@@ -209,7 +209,7 @@ class FlowModel(nn.Module):
         embd = torch.zeros((b, d_time_embd), device=device)
         pos = time
         indices = torch.arange(d_time_embd // 2, device=device)
-        outer = einops.einsum(pos, torch.pow(10000, 2*indices / d_time_embd), "n, d -> n d")
+        outer = einops.einsum(pos, 1.0/torch.pow(10000, 2*indices / d_time_embd), "n, d -> n d")
         embd[:, 0::2] = torch.sin(outer)
         embd[:, 1::2] = torch.cos(outer)
         return embd
