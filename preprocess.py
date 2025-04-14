@@ -54,7 +54,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Crop and rescale images in a folder.")
     parser.add_argument("--input_folder", type=str, help="Path to the folder containing input images.")
     parser.add_argument("--output_folder", type=str, help="Path to the folder to save processed images.")
-    parser.add_argument("--size", type=int, nargs=2, default=(512, 512), help="Desired output size (width height).")
+    parser.add_argument("--size", type=int, nargs=2, default=(128, 128), help="Desired output size (width height).")
 
     args = parser.parse_args()
 

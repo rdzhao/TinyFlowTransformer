@@ -14,10 +14,11 @@ class FlowDataset(IterableDataset):
         self.transforms = transforms.ToTensor()
 
     def __iter__(self):
-        for image_file in self.image_files:
-            image_name = image_file.split(".")[0]
-            
-            image = Image.open(str(Path(self.data_folder) / image_file))
-            image = self.transforms(image)
+        while True:
+            for image_file in self.image_files:
+                image_name = image_file.split(".")[0]
+                
+                image = Image.open(str(Path(self.data_folder) / image_file))
+                image = self.transforms(image)
 
-            yield image, image_name
+                yield image, image_name

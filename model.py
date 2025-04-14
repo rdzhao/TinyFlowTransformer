@@ -207,7 +207,7 @@ class FlowModel(nn.Module):
         assert d_time_embd % 2 == 0
         b = time.shape[0]
         embd = torch.zeros((b, d_time_embd), device=device)
-        pos = time
+        pos = time*1000
         indices = torch.arange(d_time_embd // 2, device=device)
         outer = einops.einsum(pos, 1.0/torch.pow(10000, 2*indices / d_time_embd), "n, d -> n d")
         embd[:, 0::2] = torch.sin(outer)

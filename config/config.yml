@@ -1,18 +1,17 @@
 dataset:
   data_folder: "data"
-  batch_size: 2
+  batch_size: 256
 
 model:
-  n_blocks: 4
+  n_blocks: 12
   c_latent: 4
-  d_embd: 8
-  n_head: 2
-  d_time_embd: 8
-  d_cond_embd: 8
+  d_embd: 768
+  n_head: 12
+  d_time_embd: 256
   patch_size: 2
 
 train:
-  n_epochs: 100000
-  learning_rate: 0.005
+  n_epochs: 1
+  learning_rate: 0.01
   weight_decay: 0.01
   

@@ -26,7 +26,7 @@ class FlowTrainer():
         self.train_config = config["train"]
 
         self.dataset = FlowDataset(self.dataset_config["data_folder"])
-        self.dataloader = DataLoader(self.dataset, batch_size=self.dataset_config["batch_size"])
+        self.dataloader = DataLoader(self.dataset, batch_size=self.dataset_config["batch_size"], num_workers=4)
 
         self.vae = AutoencoderKL.from_pretrained(
             "CompVis/stable-diffusion-v1-4", 
@@ -91,13 +91,15 @@ class FlowTrainer():
         noise = torch.randn(l_b, l_c, l_h, l_w).to(image.device)
 
         time = torch.rand(b).to(image.device)
+        time = torch.clamp(time, min=1e-4)
         time_broadcast = einops.rearrange(time, "b -> b 1 1 1")
         
+        # x = noise + t*(latent - noise) -> x + (1-t)*(latent-noise) = latent 
         x = time_broadcast * latent + (1 - time_broadcast)*noise
         
-        noise_pred = self.model(x, time, cond)
+        vf_pred = self.model(x, time, cond)
 
-        loss = self.loss(noise, noise_pred)
+        loss = self.loss(latent - noise, vf_pred)
 
         self.optimizer.zero_grad()
         loss.backward()
