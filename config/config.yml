@@ -14,9 +14,11 @@ train:
   n_epochs: 1
   learning_rate: 0.01
   weight_decay: 0.01
+  save_ckpt_interval: 3000
+  ckpt_folder: "ckpt"
 
 eval:
   eval_folder: "eval" 
-  iters: 1
+  iters: 200
   steps: 5
   

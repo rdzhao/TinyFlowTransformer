@@ -98,7 +98,7 @@ class FlowTrainer():
             torch.manual_seed(42)
             noise = torch.randn(l_b, l_c, l_h, l_w, device=image.device)
 
-        time = torch.rand(b).to(image.device)
+        time = torch.rand(b).to(image.device) ** 2
         time = torch.clamp(time, min=1e-4)
         time_broadcast = einops.rearrange(time, "b -> b 1 1 1")
         
@@ -123,6 +123,9 @@ class FlowTrainer():
 
                 if k % self.eval_config["iters"] == 0:
                     self.eval(k ,batch[0][0:2], batch[1][0:2])
+
+                if k % self.train_config["save_ckpt_interval"] == 0:
+                    self.save_checkpoint(k)
 
     @torch.no_grad()
     def eval(self, num_iters, image, desc):
@@ -165,6 +168,17 @@ class FlowTrainer():
             iter_folder = f"{eval_folder}/iteration_{num_iters}"
             os.makedirs(iter_folder, exist_ok=True)
             dec_image_pil.save(f"{iter_folder}/img_{i}.jpg")
+
+    def save_checkpoint(self, iterations):
+        checkpoint = {
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+        }
+        ckpt_folder = self.train_config["ckpt_folder"]
+        os.makedirs(ckpt_folder, exist_ok=True)
+
+        filepath = f"{ckpt_folder}/iteration_{iterations}.pth"
+        torch.save(checkpoint, filepath)
 
     
 if __name__ == "__main__":
