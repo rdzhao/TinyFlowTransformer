@@ -93,10 +93,7 @@ class FlowTrainer():
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
             cond = self.clip_text_encoder(**inputs).last_hidden_state
 
-        # noise = torch.randn(l_b, l_c, l_h, l_w).to(image.device)
-        with torch.random.fork_rng(devices=[image.device], enabled=True):
-            torch.manual_seed(42)
-            noise = torch.randn(l_b, l_c, l_h, l_w, device=image.device)
+        noise = torch.randn(l_b, l_c, l_h, l_w).to(image.device)
 
         time = torch.rand(b).to(image.device) ** 2
         time = torch.clamp(time, min=1e-4)
